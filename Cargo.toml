@@ -1,0 +1,21 @@
+[package]
+name = "hex-magic"
+version = "0.0.1"
+authors = ["0x7D2B <0x7D2B@protonmail.com>"]
+edition = "2018"
+license = "MIT OR Apache-2.0"
+keywords = ["hex", "proc-macro", "literals", "parser", "io"]
+categories = ["filesystem", "parsing"]
+repository = "https://github.com/0x7D2B/hex-magic"
+description = "Macros for working with bytes and hexadecimal values."
+
+[lib]
+proc-macro = true
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+syn = {version = "1", features = ["full", "extra-traits", "printing"] }
+quote = "1"
+proc-macro2 = "1"
+
