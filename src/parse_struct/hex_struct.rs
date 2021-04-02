@@ -1,5 +1,5 @@
 use proc_macro2::TokenStream;
-use quote::{quote, quote_spanned, ToTokens};
+use quote::{quote, ToTokens};
 use syn::parse::{Parse, ParseStream};
 
 use syn::{
@@ -7,11 +7,10 @@ use syn::{
     punctuated::Punctuated,
     spanned::Spanned,
     token::{Brace, Comma, Dot2},
-    Attribute, Expr, Ident, Path, Result, Token,
+    Attribute, Expr, Path, Result, Token,
 };
 
-use super::hex_struct_field::HexStructField;
-use super::READER_UUID;
+use super::{hex_struct_field::HexStructField, internal_ident};
 
 #[derive(Debug)]
 pub struct HexStruct {
@@ -33,104 +32,113 @@ impl Parse for HexStruct {
         let path = input.parse()?;
         let content;
         let brace = braced!(content in input);
-        let fields = Punctuated::parse_terminated(&content)?;
+        let mut fields = Punctuated::new();
 
-        {
-            let mut iter = fields.iter().peekable();
-            while let Some(field) = iter.next() {
-                if let (HexStructField::Match { .. }, Some(next @ HexStructField::Match { .. })) =
-                    (field, iter.peek())
-                {
-                    return Err(syn::Error::new(
-                        field
-                            .span()
-                            .join(next.span())
-                            .unwrap_or_else(|| field.span()),
-                        "consecutive `_` patterns are not allowed",
-                    ));
-                }
+        while !content.is_empty() {
+            if content.peek(Token![..]) {
+                return Ok(Self {
+                    reader,
+                    attrs,
+                    path,
+                    brace,
+                    fields,
+                    dot2_token: Some(content.parse()?),
+                    rest: if content.is_empty() {
+                        None
+                    } else {
+                        Some(Box::new(content.parse()?))
+                    },
+                });
             }
+
+            fields.push(content.parse()?);
+            if content.is_empty() {
+                break;
+            }
+            let punct: Token![,] = content.parse()?;
+            fields.push_punct(punct);
         }
 
-        let mut dot2_token = None;
-        let mut rest = None;
-        if content.peek(Token![..]) {
-            dot2_token.replace(content.parse()?);
-            rest.replace(content.parse()?);
-        }
-
-        Ok(Self {
+        Ok(HexStruct {
             reader,
             attrs,
             path,
             brace,
             fields,
-            dot2_token,
-            rest,
+            dot2_token: None,
+            rest: None,
         })
     }
 }
 
 impl ToTokens for HexStruct {
-    fn to_tokens(&self, output_tokens: &mut TokenStream) {
-        let mut tokens = TokenStream::new();
-        let tokens = &mut tokens;
+    fn to_tokens(&self, output_stream: &mut TokenStream) {
+        let mut closure_stream = TokenStream::new();
+        self.brace.surround(&mut closure_stream, |stream| {
+            let HexStruct {
+                reader,
+                attrs,
+                path,
+                fields,
+                dot2_token,
+                rest,
+                ..
+            } = self;
 
-        let HexStruct {
-            reader,
-            attrs,
-            path,
-            fields,
-            dot2_token,
-            rest,
-            ..
-        } = self;
+            // setup
+            let array_ident = internal_ident("ARRAY", reader.span());
+            let len = fields
+                .iter()
+                .map(|field| field.byte_pattern().len())
+                .max()
+                .unwrap_or_default();
 
-        // setup reader
-        let reader_ident = Ident::new(READER_UUID, reader.span());
-        quote_spanned!(reader.span()=>
-             #[allow(non_snake_case)]
-             let mut #reader_ident = #reader;
-        )
-        .to_tokens(tokens);
+            let reader_ident = internal_ident("READER", reader.span());
+            quote!(
+                 use std::convert::TryInto;
 
-        // setup iterator and handle the first `_` ocurrence
-        let mut iter = fields.iter().peekable();
-        if let Some(HexStructField::Match { .. }) = iter.peek() {
-            iter.next().unwrap().to_tokens(None).to_tokens(tokens);
-        }
+                 #[allow(non_snake_case)]
+                 let mut #reader_ident = #reader;
 
-        let mut ok_tokens = TokenStream::new();
-        {
-            // struct setup
-            quote! (
-                #(#attrs)*
-                #path
+                 #[allow(non_snake_case)]
+                 let mut #array_ident: [u8; #len] = [0; #len];
             )
-            .to_tokens(&mut ok_tokens);
+            .to_tokens(stream);
 
-            // struct fields
-            self.brace.surround(&mut ok_tokens, |tokens| {
-                while let Some(field) = iter.next() {
-                    match field {
-                        HexStructField::Match { .. } => (), // handled previously
-                        HexStructField::Field { .. } => {
-                            field.to_tokens(iter.peek()).to_tokens(tokens);
-                        }
+            for field in fields {
+                field.to_tokens(stream);
+            }
+
+            let mut struct_stream = TokenStream::new();
+            let struct_stream = &mut struct_stream;
+            {
+                // struct fields
+                for pair in fields.pairs() {
+                    let field = pair.value();
+                    let comma = pair.punct();
+
+                    if !field.is_struct_member() {
+                        continue;
+                    } else {
+                        field.to_instantiation_tokens(struct_stream);
+                        comma.to_tokens(struct_stream);
                     }
                 }
-            });
+                // .. rest
+                dot2_token.to_tokens(struct_stream);
+                rest.to_tokens(struct_stream);
+            }
 
-            // .. rest
-            quote!(#dot2_token#rest).to_tokens(&mut ok_tokens);
-        }
-        quote!(Ok(#ok_tokens)).to_tokens(tokens);
+            // struct setup
+            quote!(
+                Ok(#(#attrs)* #path { #struct_stream })
+            )
+            .to_tokens(stream);
+        });
 
         quote!(
-            (|| {
-                #tokens
-            })()
+            (|| { #closure_stream })()
         )
-        .to_tokens(output_tokens);
+        .to_tokens(output_stream);
     }
 }

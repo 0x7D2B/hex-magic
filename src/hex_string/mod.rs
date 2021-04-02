@@ -16,8 +16,8 @@ pub enum HexValue {
 impl fmt::Display for HexValue {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::Number { value, .. } => write!(f, "{:02X}", value),
-            Self::Underscore { .. } => write!(f, "__"),
+            Self::Number { value, .. } => write!(f, "0x{:02X}", value),
+            Self::Underscore { .. } => write!(f, "_"),
             Self::DotDot { .. } => write!(f, ".."),
         }
     }
@@ -69,6 +69,12 @@ impl Parse for HexString {
     fn parse(input: ParseStream) -> Result<Self> {
         let litstr = input.parse::<LitStr>()?;
         let span = litstr.span();
+        if !litstr.value().as_str().is_ascii() {
+            return Err(syn::Error::new(
+                span,
+                "hex string contains invalid characters",
+            ));
+        }
         let chars: Vec<u8> = litstr.value().into();
         let mut elems: Vec<HexValue> = vec![];
 
@@ -160,7 +166,14 @@ impl Parse for HexString {
                 }
             }
         }
-        Ok(Self { elems })
+        if need_dot || need_hex || need_underscore {
+            Err(syn::Error::new(
+                span,
+                "expected even number of hex characters",
+            ))
+        } else {
+            Ok(Self { elems })
+        }
     }
 }
 

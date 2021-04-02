@@ -35,18 +35,10 @@ impl BytePattern {
 impl fmt::Display for BytePattern {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::Array { elems, .. } => write!(
-                f,
-                "[{}]",
-                elems
-                    .iter()
-                    .map(|t| {
-                        let s = quote!(#t).to_string();
-                        s.parse::<u8>().map(|u| format!("{:02X}", u)).unwrap_or(s)
-                    })
-                    .collect::<Vec<String>>()
-                    .join(", ")
-            ),
+            Self::Array { elems, .. } => {
+                let elems = elems.iter();
+                write!(f, "{}", quote!([#(#elems),*]))
+            }
             Self::HexString(hex) => write!(f, "{}", hex),
             Self::LitByteStr(bstr) => write!(f, "{}", quote!(#bstr)),
         }

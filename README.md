@@ -7,10 +7,12 @@ This crate provides macros for working with bytes and hexadecimal values.
 ```
 assert_eq!(hex!("01020304"), [1, 2, 3, 4]);
 ```
+
 # `parse_struct!`
 
-`parse_struct!` is a macro for parsing bytes from `Read` readers into structs,
-with the ability to skip padding bytes. It returns a `Result<STRUCT, std::io::Error>` value.
+`parse_struct!` is a macro for parsing bytes from `Read` readers
+into structs (or enums), with the ability to skip padding bytes.
+It returns a `Result<Struct, std::io::Error>` value.
 
 ```
 use hex_magic::parse_struct;
@@ -22,15 +24,18 @@ struct Data {
     b: u32,
 }
 
-fn main() -> Result<Data> {
-    let bytes = [0x48, 0x45, 0x58, 0x01, 0x02, 0x00, 0xAA, 0xBB, 0xCC, 0xDD];
-    let data = parse_struct!( bytes.as_ref() => Data {
+fn main() -> Result<()> {
+    let bytes = [
+        0x48, 0x45, 0x58, 0x00, 0x01, 0x02, 0x00, 0xAA, 0xBB, 0xCC, 0xDD,
+    ];
+    let data = parse_struct!(bytes.as_ref() => Data {
         _: b"HEX",
+        _: [0],
         a: [0x01, _],
         _: "00",
-        b: buf @ "AABB ____" => u32::from_le_bytes(buf)
-    });
-    println!("{:X?}", data); // Ok(Data { a: [1, 2], b: DDCCBBAA });
-    data
+        b: buf @ "AABB ____" => u32::from_le_bytes(*buf),
+    })?;
+    println!("{:X?}", data); // Data { a: [1, 2], b: DDCCBBAA }
+    Ok(())
 }
 ```
